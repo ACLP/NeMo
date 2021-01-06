@@ -14,6 +14,7 @@
 
 from nemo.collections.asr.modules.audio_preprocessing import (
     AudioToMelSpectrogramPreprocessor,
+    AudioToWav2vec2Preprocessor,
     AudioToMFCCPreprocessor,
     CropOrPadSpectrogramAugmentation,
     SpectrogramAugmentation,

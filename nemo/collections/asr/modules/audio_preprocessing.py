@@ -47,6 +47,7 @@ except ModuleNotFoundError:
 
 __all__ = [
     'AudioToMelSpectrogramPreprocessor',
+    'AudioToWav2vec2Preprocessor'
     'AudioToMFCCPreprocessor',
     'SpectrogramAugmentation',
     'CropOrPadSpectrogramAugmentation',
@@ -253,6 +254,80 @@ class AudioToMelSpectrogramPreprocessor(AudioPreprocessor):
     def filter_banks(self):
         return self.featurizer.filter_banks
 
+
+class AudioToWav2vec2Preprocessor(AudioPreprocessor):
+    """Featurizer module that converts wavs to wav2vec 2.0 embeddings.
+    """
+    @property
+    def input_types(self):
+        """Returns definitions of module input ports.
+        """
+        return {
+            "input_signal": NeuralType(('B', 'T'), AudioSignal(freq=self._sample_rate)),
+            "length": NeuralType(tuple('B'), LengthsType()),
+        }
+
+    @property
+    def output_types(self):
+        """Returns definitions of module output ports.
+        processed_signal:
+            0: AxisType(BatchTag)
+            1: AxisType(MelSpectrogramSignalTag)
+            2: AxisType(ProcessedTimeTag)
+        processed_length:
+            0: AxisType(BatchTag)
+        """
+        return {
+            "processed_signal": NeuralType(('B', 'D', 'T'), MelSpectrogramType()),
+            "processed_length": NeuralType(tuple('B'), LengthsType()),
+        }
+
+    def __init__(
+        self,
+        model_path
+        sample_rate=16000,
+    ):
+        super().__init__(None, None)
+
+        self._sample_rate = sample_rate
+        self.featurizer =  fairseq.checkpoint_utils.load_model_ensemble_and_task([model_path])[0][0]
+        self.featurizer.train()
+        self.featurizer.feature_grad_mult = 0
+        self.scaling_offset, self.scaling_ratio = self.compute_scaling_offset_and_ratio()
+        self.freeze_steps = freeze_steps
+        self.current_step = 0
+	
+
+    @typecheck
+    def forward(self,input_signal,length):
+        processed_signal, processed_length = self.get_features(input_signal, length)
+        return processed_signal, processed_length
+        
+    def get_features(self,input_signal,length):
+        freeze = self.freeze_steps > self.current_step
+        seq_len = self.get_seq_len(length)
+        if freeze:
+            with torch.no_grad():
+                output = self.featurizer(input_signal, features_only=True)['x']
+        else:
+            output = self.featurizer(input_signal, features_only=True)['x']
+        return output.transpose(1,2), seq_len
+        
+    def compute_scaling_offset_and_ratio():
+        ratio = np.prod([layer[0].stride[0] for layer in self.featurizer.feature_extractor.conv_layers])
+        req_size = 1
+        for layer in self.featurizer.feature_extractor.conv_layers[::-1]:
+            kernel_size = layer[0].kernel_size[0]
+            stride = layer[0].stride[0]
+            req_size = kernel_size + stride * (req_size -1)
+        return req_size -1, ratio
+        
+    def get_seq_len(self,seq_len):
+        return torch.ceil((seq_len - self.scaling_offset) / float(self.scaling_ratio)).to(dtype=torch.long)
+        
+    def increment_current_step(self):
+        self.current_step +=1
+        
 
 class AudioToMFCCPreprocessor(AudioPreprocessor):
     """Preprocessor that converts wavs to MFCCs.

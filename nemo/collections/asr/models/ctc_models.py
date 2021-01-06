@@ -409,6 +409,9 @@ class EncDecCTCModel(ASRModel, Exportable):
             log_every_n_steps = self._trainer.log_every_n_steps
         else:
             log_every_n_steps = 1
+        
+        if hasattr(self.preprocessor,'increment_current_step'):
+            self.preprocessor.increment_current_step()
 
         if (batch_nb + 1) % log_every_n_steps == 0:
             self._wer.update(
